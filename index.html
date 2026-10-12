@@ -1,0 +1,286 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Fourier Epicycle Drawing Machine</title>
+<script src="https://cdn.tailwindcss.com"></script>
+<style>
+  body { background: #060a14; color: #b0c4de; font-family: 'Courier New', monospace; }
+  svg { background: #060a14; border-radius: 8px; display: block; }
+  .epicycle-circle { fill: none; stroke: rgba(100,150,255,0.3); stroke-width: 1; }
+  .epicycle-arm { stroke: rgba(100,200,255,0.6); stroke-width: 1.5; }
+  .drawn-path { fill: none; stroke: #00ffcc; stroke-width: 2; }
+  .original-path { fill: none; stroke: rgba(255,200,50,0.25); stroke-width: 1.5; stroke-dasharray: 4,4; }
+  input[type=range] { accent-color: #00ffcc; }
+  select, option { background: #0d1b2a; color: #b0c4de; }
+  .ctrl-label { color: #8ab0d0; font-size: 0.75rem; }
+</style>
+</head>
+<body class="min-h-screen p-4">
+<div class="max-w-4xl mx-auto">
+  <h1 class="text-2xl font-bold text-cyan-300 mb-1">Fourier Epicycle Machine</h1>
+  <p class="text-slate-500 text-sm mb-4">Discrete Fourier Transform animates spinning circles that trace complex paths</p>
+
+  <div class="flex flex-wrap gap-4 mb-4">
+    <div>
+      <label for="pathSelect" class="ctrl-label block mb-1">Shape</label>
+      <select id="pathSelect" onchange="selectShape()" class="border border-slate-600 rounded px-3 py-1 text-sm" aria-label="Select shape">
+        <option value="star">Star</option>
+        <option value="heart">Heart</option>
+        <option value="wave">Wave</option>
+        <option value="letterA">Letter A</option>
+        <option value="spiral">Spiral</option>
+      </select>
+    </div>
+    <div>
+      <label for="epicycleCount" class="ctrl-label block mb-1">Epicycles: <span id="epicycleVal">20</span></label>
+      <input type="range" id="epicycleCount" min="1" max="60" value="20" class="w-36" aria-label="Number of epicycles" oninput="setEpicycles(this.value)">
+    </div>
+    <div>
+      <label for="speedCtrl" class="ctrl-label block mb-1">Speed: <span id="speedVal">1.0x</span></label>
+      <input type="range" id="speedCtrl" min="0.1" max="3" step="0.1" value="1" class="w-32" aria-label="Animation speed" oninput="setSpeed(this.value)">
+    </div>
+    <div class="flex items-end">
+      <button onclick="togglePlay()" id="playBtn" class="bg-cyan-800 hover:bg-cyan-700 text-cyan-100 px-4 py-1 rounded border border-cyan-600 text-sm" aria-label="Play or pause animation">⏸ Pause</button>
+    </div>
+    <div class="flex items-end">
+      <button onclick="clearTrace()" class="bg-slate-700 hover:bg-slate-600 text-slate-300 px-4 py-1 rounded border border-slate-500 text-sm" aria-label="Clear trace">Clear Trace</button>
+    </div>
+  </div>
+
+  <div class="flex gap-4 items-start">
+    <svg id="mainSvg" width="600" height="480" aria-label="Fourier epicycle animation">
+      <g id="originalGroup"></g>
+      <g id="epicyclesGroup"></g>
+      <path id="drawnPath" class="drawn-path" d=""></path>
+    </svg>
+    <div class="text-xs text-slate-500 space-y-2 min-w-[140px]">
+      <div class="border border-slate-700 rounded p-2">
+        <div class="text-cyan-400 mb-1">Legend</div>
+        <div class="flex items-center gap-1"><span style="display:inline-block;width:20px;height:2px;background:#00ffcc"></span> Traced path</div>
+        <div class="flex items-center gap-1 mt-1"><span style="display:inline-block;width:20px;height:1px;border-top:2px dashed rgba(255,200,50,0.5)"></span> Original</div>
+        <div class="flex items-center gap-1 mt-1"><span style="display:inline-block;width:20px;height:1px;background:rgba(100,150,255,0.4)"></span> Circles</div>
+      </div>
+      <div class="border border-slate-700 rounded p-2">
+        <div class="text-cyan-400 mb-1">DFT Info</div>
+        <div>Components: <span id="infoN" class="text-white">—</span></div>
+        <div>Showing: <span id="infoShowing" class="text-white">—</span></div>
+        <div>Progress: <span id="infoProgress" class="text-white">—</span></div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script>
+const W = 600, H = 480, CX = 280, CY = 240;
+
+// --- Shape definitions (sampled point arrays) ---
+function sampleStar(n) {
+  const pts = [];
+  const r1 = 150, r2 = 70, spikes = 5;
+  for (let i = 0; i < n; i++) {
+    const t = (i / n) * Math.PI * 2;
+    const spike = Math.floor(t / (Math.PI * 2 / (spikes * 2)));
+    const r = spike % 2 === 0 ? r1 : r2;
+    const baseAngle = (spike * Math.PI * 2) / (spikes * 2);
+    const nextAngle = ((spike + 1) * Math.PI * 2) / (spikes * 2);
+    const frac = (t - baseAngle) / (nextAngle - baseAngle);
+    const ri = spike % 2 === 0 ? r1 + (r2 - r1) * frac : r2 + (r1 - r2) * frac;
+    pts.push({ x: ri * Math.cos(t - Math.PI / 2), y: ri * Math.sin(t - Math.PI / 2) });
+  }
+  return pts;
+}
+
+function sampleHeart(n) {
+  const pts = [];
+  for (let i = 0; i < n; i++) {
+    const t = (i / n) * Math.PI * 2;
+    const x = 16 * Math.pow(Math.sin(t), 3);
+    const y = -(13 * Math.cos(t) - 5 * Math.cos(2*t) - 2 * Math.cos(3*t) - Math.cos(4*t));
+    pts.push({ x: x * 8.5, y: y * 8.5 });
+  }
+  return pts;
+}
+
+function sampleWave(n) {
+  const pts = [];
+  for (let i = 0; i < n; i++) {
+    const t = (i / n) * Math.PI * 4 - Math.PI * 2;
+    pts.push({ x: t * 50, y: -(Math.sin(t) * 100 + Math.sin(t * 3) * 40) });
+  }
+  return pts;
+}
+
+function sampleLetterA(n) {
+  // Approximate letter A as line segments
+  const segments = [
+    {x:-80,y:130}, {x:0,y:-130}, {x:80,y:130},
+    {x:40,y:20}, {x:-40,y:20}, {x:-80,y:130}
+  ];
+  const pts = [];
+  const totalLen = segments.reduce((acc, _, i) => {
+    if (i === 0) return acc;
+    const prev = segments[i-1];
+    return acc + Math.hypot(_.x - prev.x, _.y - prev.y);
+  }, 0);
+  let traveled = 0;
+  let si = 0;
+  for (let i = 0; i < n; i++) {
+    const target = (i / n) * totalLen;
+    while (si < segments.length - 1) {
+      const segLen = Math.hypot(segments[si+1].x - segments[si].x, segments[si+1].y - segments[si].y);
+      if (traveled + segLen >= target) {
+        const frac = (target - traveled) / segLen;
+        pts.push({ x: segments[si].x + frac * (segments[si+1].x - segments[si].x), y: segments[si].y + frac * (segments[si+1].y - segments[si].y) });
+        break;
+      }
+      traveled += segLen; si++;
+    }
+    if (pts.length < i + 1) pts.push(segments[si] || segments[segments.length-1]);
+  }
+  return pts;
+}
+
+function sampleSpiral(n) {
+  const pts = [];
+  for (let i = 0; i < n; i++) {
+    const t = (i / n) * Math.PI * 6;
+    const r = (t / (Math.PI * 6)) * 160;
+    pts.push({ x: r * Math.cos(t), y: r * Math.sin(t) });
+  }
+  return pts;
+}
+
+const SHAPES = { star: sampleStar, heart: sampleHeart, wave: sampleWave, letterA: sampleLetterA, spiral: sampleSpiral };
+const NSAMPLE = 128;
+
+// --- DFT ---
+function dft(points) {
+  const N = points.length;
+  const X = [];
+  for (let k = 0; k < N; k++) {
+    let re = 0, im = 0;
+    for (let n = 0; n < N; n++) {
+      const phi = (2 * Math.PI * k * n) / N;
+      re += points[n].x * Math.cos(phi) + points[n].y * Math.sin(phi);
+      im += -points[n].x * Math.sin(phi) + points[n].y * Math.cos(phi);
+    }
+    re /= N; im /= N;
+    const amp = Math.sqrt(re*re + im*im);
+    const phase = Math.atan2(im, re);
+    X.push({ freq: k, re, im, amp, phase });
+  }
+  return X.sort((a, b) => b.amp - a.amp);
+}
+
+let fourierData = [];
+let originalPoints = [];
+let numEpicycles = 20;
+let speed = 1.0;
+let time = 0;
+let tracePath = [];
+let animId = null;
+let paused = false;
+let lastTs = null;
+
+function selectShape() {
+  const name = document.getElementById('pathSelect').value;
+  const rawPts = SHAPES[name](NSAMPLE);
+  originalPoints = rawPts;
+  fourierData = dft(rawPts);
+  document.getElementById('infoN').textContent = fourierData.length;
+  tracePath = [];
+  time = 0;
+  drawOriginal();
+  setEpicycles(numEpicycles);
+}
+
+function setEpicycles(v) {
+  numEpicycles = Math.min(parseInt(v), fourierData.length);
+  document.getElementById('epicycleVal').textContent = numEpicycles;
+  document.getElementById('epicycleCount').value = numEpicycles;
+  document.getElementById('infoShowing').textContent = numEpicycles;
+  tracePath = []; time = 0;
+}
+
+function setSpeed(v) {
+  speed = parseFloat(v);
+  document.getElementById('speedVal').textContent = speed.toFixed(1) + 'x';
+}
+
+function clearTrace() { tracePath = []; }
+
+function drawOriginal() {
+  const g = document.getElementById('originalGroup');
+  if (originalPoints.length === 0) { g.innerHTML = ''; return; }
+  const d = originalPoints.map((p, i) => `${i===0?'M':'L'}${CX+p.x},${CY+p.y}`).join(' ') + 'Z';
+  g.innerHTML = `<path class="original-path" d="${d}"/>`;
+}
+
+function drawEpicycles(t) {
+  const N = fourierData.length;
+  const dt = (2 * Math.PI) / N;
+  let x = CX, y = CY;
+  const g = document.getElementById('epicyclesGroup');
+  let html = '';
+  const arms = [];
+
+  for (let i = 0; i < numEpicycles; i++) {
+    if (i >= N) break;
+    const { freq, amp, phase } = fourierData[i];
+    const prevX = x, prevY = y;
+    const angle = freq * t + phase;
+    x += amp * Math.cos(angle);
+    y += amp * Math.sin(angle);
+    if (amp > 0.5) {
+      html += `<circle class="epicycle-circle" cx="${prevX.toFixed(1)}" cy="${prevY.toFixed(1)}" r="${amp.toFixed(1)}"/>`;
+      html += `<line class="epicycle-arm" x1="${prevX.toFixed(1)}" y1="${prevY.toFixed(1)}" x2="${x.toFixed(1)}" y2="${y.toFixed(1)}"/>`;
+    }
+  }
+  g.innerHTML = html;
+  return { x, y };
+}
+
+let dt_accum = 0;
+function animate(ts) {
+  if (!paused) {
+    if (lastTs !== null) {
+      const elapsed = (ts - lastTs) / 1000;
+      const N = fourierData.length;
+      const period = (2 * Math.PI) / (N > 0 ? 1 : 1);
+      dt_accum += elapsed * speed * 0.5;
+      time = dt_accum;
+    }
+    lastTs = ts;
+
+    const { x, y } = drawEpicycles(time);
+    tracePath.push({ x, y });
+
+    // Limit trace to NSAMPLE points to keep one full cycle
+    const maxTrace = NSAMPLE * 4;
+    if (tracePath.length > maxTrace) tracePath.shift();
+
+    if (tracePath.length > 1) {
+      const d = tracePath.map((p, i) => `${i===0?'M':'L'}${p.x.toFixed(1)},${p.y.toFixed(1)}`).join(' ');
+      document.getElementById('drawnPath').setAttribute('d', d);
+    }
+
+    const pct = ((time % (2 * Math.PI)) / (2 * Math.PI) * 100).toFixed(0);
+    document.getElementById('infoProgress').textContent = pct + '%';
+  } else {
+    lastTs = null;
+  }
+  animId = requestAnimationFrame(animate);
+}
+
+function togglePlay() {
+  paused = !paused;
+  document.getElementById('playBtn').textContent = paused ? '▶ Play' : '⏸ Pause';
+}
+
+selectShape();
+animId = requestAnimationFrame(animate);
+</script>
+</body>
+</html>
